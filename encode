@@ -25,6 +25,8 @@ def parse_args():
     .dryrun    outputs all actions as text but does not run the encoder
     .verbose   prints out all '[INFO]' statements
     .quality   explicitly sets the RF value
+    .force     removes the gate to check if the file has been encoded
+               already and forces encoding
     
     :returns: the resultant `args` to retrieve input values
     """
@@ -41,6 +43,9 @@ def parse_args():
                         help="sets RF value and overrides the preset")
     parser.add_argument("-v", "--verbose",
                         help="outputs additional info, pairs well w/ --dryrun",
+                        action="store_true")
+    parser.add_argument("-f", "--force",
+                        help="forces the encoding even if already in x265 codec",
                         action="store_true")
 
     return parser.parse_args()
@@ -201,7 +206,7 @@ def encode(input_v, output_v, ctx):
     """
 
     # first check if the file has been encoded or not
-    if not already_encoded(input_v, ctx):
+    if not already_encoded(input_v, ctx) or ctx.force:
         encode_cmd = list(['HandBrakeCLI'] +
                           determine_encoding(input_v, ctx) +
                           ['-i', input_v, '-o', output_v])
