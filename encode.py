@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import argparse
+import subprocess
+
+from os import path
+
+# Encode file w handbrakecli command
+# - takes single video or directory and performs traversal
+# - uses 'Roku 2160p60 4K HEVC Surround' preset profile
+# - inspects video file to determine RF quality value (overrides preset)
+# - requires 'handbrakecli', 'ffmpeg' installed
+
+
+def parse_args():
+    """
+    Parses the input with `argparse`.
+
+    Arg return values are as follows:
+    .to_encode the file or directory to walk and encode
+    .delete    sets the delete flag to remove files after encoding
+               is finished
+    .dryrun    outputs all actions as text but does not run the encoder
+    .verbose   prints out all '[INFO]' statements
+    .quality   explicitly sets the RF value
+    
+    :returns: the resultant `args` to retrieve input values
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("to_encode",
+                        help="file or directory to walk and encode")
+    parser.add_argument("-d", "--delete",
+                        help="deletes the file after encoding",
+                        action="store_true")
+    parser.add_argument("--dryrun",
+                        help="runs changes without executing encoder",
+                        action="store_true")
+    parser.add_argument("-q", "--quality",
+                        help="sets RF value and overrides the preset")
+    parser.add_argument("-v", "--verbose",
+                        help="outputs additional info, pairs well w/ --dryrun",
+                        action="store_true")
+
+    return parser.parse_args()
+
+
+def is_video(f):
+    """
+    Determines if the file 'f' is of type 'video', uses the 'file'
+    UNIX command to return a mime-type (eg 'application/x-python')
+    which we then strip to the top level (eg 'application') and
+    use to check if it is of type 'video'.
+
+    :param f: the filename, can we absolute path or relative
+    :returns: True if 'f' is of type 'video', False otherwise
+    """
+
+    ftype = subprocess.check_output(['file', '--mime-type', f]).strip()
+    ftype = str(ftype).split(':')[1].split('/')[0].strip()
+    return True if ftype == 'video' else False
+
+
+def to_output_name(input_v):
+    """
+    Given an input video 'input_v' use the known profile to
+    create a proper output name (ie proper extension plus signal
+    that this file has been converted).
+
+    :param input_v: string name of input video, can be absolute path or not
+    :returns: output video name - same path as provided from input_v
+    """
+    dirname = path.dirname(input_v)
+    name, ext = path.splitext(path.basename(input_v))
+
+    if not name:
+        print("[ERROR] Cannot retrieve a basename from:", input_v)
+        exit(1)
+
+    # convert whitespace and periods to underscores
+    out_name = name.replace(' ','_').replace('.','_')
+
+    # LEGACY: if we already converted this in the old format then
+    # remove the 'roku1080p30s' string we used as a signal
+    out_name = out_name.replace('_roku1080p30s', '')
+
+    return str(path.join(dirname, out_name+'_[r4k60s].mkv'))
+
+
+def already_encoded(input_v, ctx):
+    """
+    Determines if the file 'input_v' has already been encoded to the
+    'Roku 4k' preset. Right now that algorithm merely checks if the
+    string 'roku4k60s' is part of the input_v file name.
+
+    :param input_v: the input video as a string
+    :param ctx: the namespaced `args` passed in as a result of the side effect
+                argparser.ArgumentParser().parse_args() call
+    :returns: True if the input_v has been encoded already else False
+    """
+
+    # runs an 'ffprobe' check to determine the video codec - if we find
+    # that it is already encoded to hevc (x265) then we assume it does
+    # not need encoding
+    codec = subprocess.check_output(['ffprobe',
+                                     '-v', 'error',
+                                     '-select_streams', 'v:0',
+                                     '-show_entries', 'stream=codec_name',
+                                     '-of', 'default=noprint_wrappers=1:nokey=1',
+                                     input_v]).decode().strip()
+    if ctx.verbose: print("[INFO] Detected codec:", codec)
+
+    res = False
+    if codec == 'hevc': res = True
+    # LEGACY: we also check for filename tags even though its not necessary
+    elif 'roku4k60s' in input_v or 'r4k60s' in input_v: res = True
+    return res
+
+
+def determine_encoding(input_v, ctx):
+    """
+    Uses the input video to determine the correct HandBrakeCLI
+    command to encode the file. Uses video height to determine the
+    preset used (all presets are MKV, x265). Also checks for .srt
+    files present within the same directory and adds them in.
+
+    :param input_v: string path of the input video on disk
+    :param ctx: the namespaced `args` passed in as a result of the side effect
+                argparser.ArgumentParser().parse_args() call
+    :returns: list of HandBrakeCLI options to append to the
+              subprocess call
+    """
+    
+    # First we inspect the file for video-related information
+    # https://stackoverflow.com/a/29585066
+    # `ffprobe` returns data in the format of:
+    # $
+    # $ height=1660
+    # hence why we strip then split on the '='
+    height = int(subprocess.check_output(['ffprobe',
+                                          '-v', 'error',
+                                          '-select_streams', 'v:0',
+                                          '-show_entries', 'stream=height',
+                                          '-of', 'default=noprint_wrappers=1',
+                                          input_v]).decode().strip().split('=')[1])
+
+    if ctx.verbose: print("[INFO] Detected video height:", height)
+    
+    # https://handbrake.fr/docs/en/latest/technical/official-presets.html
+    preset = ['-Z']
+    if height >= 2160: preset += ['H.265 MKV 2160p60']
+    elif height >= 1080: preset += ['H.265 MKV 1080p30']
+    elif height >= 720: preset += ['H.265 MKV 720p30']
+    else: preset += ['H.265 MKV 480p30']
+
+    # Next we check and override the RF (quality) value if passed in
+    quality = []
+    if ctx.quality:
+        if ctx.verbose: print("[INFO] Overriding quality to:", ctx.quality)
+        quality += ['-q', ctx.quality]
+
+    # Now we check the current directory of the file for any *.srt files
+    # and include those
+    srt = []
+    dirpath = path.dirname(path.realpath(input_v))
+    # TODO: walk the directory and maintain folder structure
+    srtfiles = []
+    for root, _, files in os.walk(dirpath):
+        srtfiles += [path.join(root,x) for x in files if path.splitext(x)[1] == '.srt']
+    if ctx.verbose: print("[INFO] Found .srt file(s):", srtfiles)
+    srt += ['--srt-file', ','.join(srtfiles)]
+        
+    # Then we copy the audio-related information encoding into 'aac' and 'ac3'
+    # formats. We pass through streams if they're already present (vs creating
+    # additional, duplicative streams in the file) maintaining up to a 5.1
+    # surround sound
+    audio = ['-E', 'copy:aac,copy:ac3', '--mixdown', 'aac:5point1,ac3:5point1']
+    
+    # https://handbrake.fr/docs/en/latest/cli/command-line-reference.html
+    subtitles = ['--all-subtitles']
+    
+    # Last we put it all together
+    res = preset + audio + subtitles
+    if quality: res += quality
+    if srt: res += srt
+    return res
+
+
+def encode(input_v, output_v, ctx):
+    """
+    Runs the HandBrakeCLI command with the Roku 4k preset to
+    convert input_v to output_v. Defaults to deleting the video
+    'input_v' upon completion.
+
+    :param input_v: string path of the input video on disk
+    :param output_v: string path of the output video name
+    :param ctx: the namespaced `args` passed in as a result of the side effect
+                argparser.ArgumentParser().parse_args() call
+    :returns: None
+    """
+
+    # first check if the file has been encoded or not
+    if not already_encoded(input_v, ctx):
+        encode_cmd = list(['HandBrakeCLI'] +
+                          determine_encoding(input_v, ctx) +
+                          ['-i', input_v, '-o', output_v])
+        
+        # the only [INFO] statement that runs without --verbose (for --dryrun)
+        print("[INFO] Running $", " ".join(encode_cmd))
+
+        # Execute the encode command
+        if not ctx.dryrun: subprocess.run(encode_cmd)
+
+        if ctx.delete:
+            if ctx.verbose: print("[INFO] Deleting:", input_v)
+            if path.isfile(output_v) and is_video(output_v):
+                if not ctx.dryrun: os.remove(input_v)
+            else:
+                print("[ERROR] Cannot delete", input_v, "due to",
+                      output_v, "not being a video file")
+    else:
+        print("[SKIP] Skipping input_v", input_v, "- already encoded")
+
+
+def encode_directory(input_d, ctx):
+    """
+    Encodes an entire directory subtree by walking the tree (through
+    os.walk()).
+
+    :param input_d: input directory to walk
+    :param ctx: the namespaced `args` passed in as a result of the side effect
+                argparser.ArgumentParser().parse_args() call
+    :returns: None
+    """
+
+    for root, _, files in os.walk(input_d):
+        for f in files:
+            abs_f = path.join(root, f)
+
+            # determine if 'abs_f' is of type 'video'
+            if is_video(abs_f): encode(abs_f,
+                                       to_output_name(abs_f),
+                                       ctx)
+
+
+if __name__ == "__main__":
+    # Parse arguments
+    args = parse_args()
+
+    # TODO: check for 'handbrakecli'
+
+    # Set file or directory to encode
+    to_encode = args.to_encode
+
+    if path.isfile(to_encode) and is_video(to_encode):
+        encode(to_encode,
+               to_output_name(to_encode),
+               args)
+    elif path.isdir(to_encode):
+        encode_directory(to_encode, args)
+    else:
+        print("[ERROR]", to_encode, "is neither a video file or directory")
