@@ -154,10 +154,9 @@ def determine_encoding(input_v, ctx):
     
     # https://handbrake.fr/docs/en/latest/technical/official-presets.html
     preset = ['-Z']
-    if height >= 2160: preset += ['H.265 MKV 2160p60']
-    elif height >= 1080: preset += ['H.265 MKV 1080p30']
-    elif height >= 720: preset += ['H.265 MKV 720p30']
-    else: preset += ['H.265 MKV 480p30']
+    if height > 1080: preset += ['H.265 MKV 2160p60']
+    elif height > 720: preset += ['H.265 MKV 1080p30']
+    else: preset += ['H.265 MKV 720p30']
 
     # Next we check and override the RF (quality) value if passed in
     quality = []
