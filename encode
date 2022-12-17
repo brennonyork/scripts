@@ -9,9 +9,8 @@ from os import path
 
 # Encode file w handbrakecli command
 # - takes single video or directory and performs traversal
-# - uses 'Roku 2160p60 4K HEVC Surround' preset profile
-# - inspects video file to determine RF quality value (overrides preset)
-# - requires 'handbrakecli', 'ffmpeg' installed
+# - uses .mkv HEVC preset profiles based on video height
+# - requires 'handbrakecli', 'ffmpeg' (which provides 'ffprobe') installed
 
 
 def parse_args():
@@ -95,10 +94,10 @@ def to_output_name(input_v):
 
 def already_encoded(input_v, ctx):
     """
-    Determines if the file 'input_v' has already been encoded to the
-    'Roku 4k' preset. Right now that algorithm merely checks if the
-    string 'roku4k60s' is part of the input_v file name.
-
+    Determines if the file 'input_v' has already been encoded. Uses 'ffprobe'
+    to inspect the video codec and, if its hevc, does not encode. Can be
+    overridden with --force.
+    
     :param input_v: the input video as a string
     :param ctx: the namespaced `args` passed in as a result of the side effect
                 argparser.ArgumentParser().parse_args() call
@@ -167,10 +166,8 @@ def determine_encoding(input_v, ctx):
     # Now we check the current directory of the file for any *.srt files
     # and include those
     srt = []
-    dirpath = path.dirname(path.realpath(input_v))
-    # TODO: walk the directory and maintain folder structure
     srtfiles = []
-    for root, _, files in os.walk(dirpath):
+    for root, _, files in os.walk(path.dirname(path.realpath(input_v))):
         srtfiles += [path.join(root,x) for x in files if path.splitext(x)[1] == '.srt']
     if ctx.verbose: print("[INFO] Found .srt file(s):", srtfiles)
     srt += ['--srt-file', ','.join(srtfiles)]
@@ -193,9 +190,8 @@ def determine_encoding(input_v, ctx):
 
 def encode(input_v, output_v, ctx):
     """
-    Runs the HandBrakeCLI command with the Roku 4k preset to
-    convert input_v to output_v. Defaults to deleting the video
-    'input_v' upon completion.
+    Runs the HandBrakeCLI command as returned from determine_encoding()
+    and converts input_v to output_v.
 
     :param input_v: string path of the input video on disk
     :param output_v: string path of the output video name
@@ -251,8 +247,6 @@ def encode_directory(input_d, ctx):
 if __name__ == "__main__":
     # Parse arguments
     args = parse_args()
-
-    # TODO: check for 'handbrakecli'
 
     # Set file or directory to encode
     to_encode = args.to_encode
