@@ -179,10 +179,10 @@ def determine_encoding(input_v, ctx):
     audio = ['-E', 'copy:aac,copy:ac3', '--mixdown', 'aac:5point1,ac3:5point1']
     
     # https://handbrake.fr/docs/en/latest/cli/command-line-reference.html
-    subtitles = ['--all-subtitles']
+    handbrake_opts = ['--all-subtitles', '--markers']
     
     # Last we put it all together
-    res = preset + audio + subtitles
+    res = preset + audio + handbrake_opts
     if quality: res += quality
     if srt: res += srt
     return res
