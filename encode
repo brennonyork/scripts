@@ -46,6 +46,9 @@ def parse_args():
     parser.add_argument("-f", "--force",
                         help="forces the encoding even if already in x265 codec",
                         action="store_true")
+    parser.add_argument("--no-ac3",
+                        help="removes the ac3 channel from being passed through / added",
+                        action="store_true")
 
     return parser.parse_args()
 
@@ -171,13 +174,18 @@ def determine_encoding(input_v, ctx):
     for root, _, files in os.walk(path.dirname(path.realpath(input_v))):
         srtfiles += [path.join(root,x) for x in files if path.splitext(x)[1] == '.srt']
     if ctx.verbose: print("[INFO] Found .srt file(s):", srtfiles)
-    srt += ['--srt-file', ','.join(srtfiles)]
+    if srtfiles: srt += ['--srt-file', ','.join(srtfiles)]
         
     # Then we copy the audio-related information encoding into 'aac' and 'ac3'
     # formats. We pass through streams if they're already present (vs creating
     # additional, duplicative streams in the file) maintaining up to a 5.1
     # surround sound
-    audio = ['-E', 'copy:aac,copy:ac3', '--mixdown', 'aac:5point1,ac3:5point1']
+    audio = []
+    if ctx.no_ac3:
+        audio += ['-E', 'copy:aac', '--mixdown', '5point1']
+    else:
+        audio += ['-E', 'copy:aac,copy:ac3', '--mixdown', '5point1,5point1']
+    
     
     # https://handbrake.fr/docs/en/latest/cli/command-line-reference.html
     handbrake_opts = ['--all-subtitles', '--markers']
