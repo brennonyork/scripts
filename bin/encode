@@ -156,7 +156,7 @@ def determine_encoding(input_v, ctx):
     
     # https://handbrake.fr/docs/en/latest/technical/official-presets.html
     preset = ['-Z']
-    if height > 1080: preset += ['H.265 MKV 2160p60']
+    if height > 1080: preset += ['H.265 MKV 2160p60 4K']
     elif height > 720: preset += ['H.265 MKV 1080p30']
     elif height > 480: preset += ['H.265 MKV 720p30']
     else: preset += ['H.265 MKV 480p30']
