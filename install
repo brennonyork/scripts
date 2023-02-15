@@ -1,12 +1,21 @@
 #!/bin/bash
 
 # installs the scripts in this repo to the ~/.bin directory
-# and adds that directory into the $PATH
+# unless specified (1st arg)
+if [[ "$1" != "" ]]; then
+    INSTALL_DIR="$1"
+else
+    INSTALL_DIR="${HOME}/.bin"
+fi
 
 # make the directory if it doesn't exist
-mkdir -p ~/.bin
+mkdir -p "${INSTALL_DIR}"
 
-# copy the files in ./bin/* to ~/.bin/.
+# copy the files in ./bin/* to INSTALL_DIR
+cp ./bin/* "${INSTALL_DIR}/."
 
-
-# update the ~/.zshrc to include ~/.bin in the $PATH
+# print a warning if INSTALL_DIR isn't in the PATH
+# https://stackoverflow.com/a/1397020
+if [[ ! ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
+    echo "[WARN] $PATH is missing ${INSTALL_DIR}"
+fi

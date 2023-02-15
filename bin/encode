@@ -29,7 +29,10 @@ def parse_args():
     
     :returns: the resultant `args` to retrieve input values
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Encodes video files with HandBrakeCLI to H265 standard. Uses " +
+        " the incoming video height and width to determine a sane set of presets, " +
+        " including RF value, as well as performs a mixdown to 5.1 AAC and AC3.")
     parser.add_argument("to_encode",
                         help="file or directory to walk and encode")
     parser.add_argument("-d", "--delete",
