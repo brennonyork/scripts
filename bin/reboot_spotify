@@ -11,7 +11,8 @@
 pkill "Spotify"
 
 # 2. Get all updates from `brew` (as we assume a brew-installed Spotify)
-brew update && brew upgrade
+brew update
+brew upgrade
 
 # 3. Reopen Spotify
 open /Applications/Spotify.app
