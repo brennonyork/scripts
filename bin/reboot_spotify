@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Kills, updates, and reboots the Spotify application to easily
+# allow remote output (as remote connections fail if Spotify
+# applications are of diff versions)
+#
+# This script written to be run as a cron (3:03am)
+# 3 3 * * * /Users/boyork/.bin/reboot_spotify
+
+# 1. Search for and kill Spotify
+pkill "Spotify"
+
+# 2. Get all updates from `brew` (as we assume a brew-installed Spotify)
+brew update && brew upgrade
+
+# 3. Reopen Spotify
+open /Applications/Spotify.app
