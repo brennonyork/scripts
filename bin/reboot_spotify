@@ -7,12 +7,14 @@
 # This script written to be run as a cron (3:03am)
 # 3 3 * * * /Users/boyork/.bin/reboot_spotify
 
+BREW="/opt/homebrew/bin/brew"
+
 # 1. Search for and kill Spotify
 pkill "Spotify"
 
 # 2. Get all updates from `brew` (as we assume a brew-installed Spotify)
-brew update
-brew upgrade
+"${BREW}" update
+"${BREW}" upgrade
 
 # 3. Reopen Spotify
 open /Applications/Spotify.app
