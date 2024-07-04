@@ -17,4 +17,4 @@ pkill "Spotify"
 "${BREW}" upgrade
 
 # 3. Reopen Spotify
-open /Applications/Spotify.app
+#open /Applications/Spotify.app

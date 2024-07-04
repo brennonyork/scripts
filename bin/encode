@@ -148,12 +148,18 @@ def determine_encoding(input_v, ctx):
     # $
     # $ height=1660
     # hence why we strip then split on the '='
-    height = int(subprocess.check_output(['ffprobe',
+    ffprobe_ret = subprocess.check_output(['ffprobe',
                                           '-v', 'error',
                                           '-select_streams', 'v:0',
                                           '-show_entries', 'stream=height',
                                           '-of', 'default=noprint_wrappers=1',
-                                          input_v]).decode().strip().split('=')[1])
+                                          input_v])
+
+    if not ffprobe_ret:
+        if ctx.verbose: print("[WARN] `ffprobe` returned NULL")
+        return []
+        
+    height = int(ffprobe_ret.decode().strip().split('=')[1])
 
     if ctx.verbose: print("[INFO] Detected video height:", height)
     
@@ -214,8 +220,14 @@ def encode(input_v, output_v, ctx):
 
     # first check if the file has been encoded or not
     if not already_encoded(input_v, ctx) or ctx.force:
+        encoding = determine_encoding(input_v, ctx)
+
+        if not encoding:
+            print("[WARN] could not determine encoding, likely not a video file - skipping")
+            return
+        
         encode_cmd = list(['HandBrakeCLI'] +
-                          determine_encoding(input_v, ctx) +
+                          encoding +
                           ['-i', input_v, '-o', output_v])
         
         # the only [INFO] statement that runs without --verbose (for --dryrun)
@@ -251,9 +263,11 @@ def encode_directory(input_d, ctx):
             abs_f = path.join(root, f)
 
             # determine if 'abs_f' is of type 'video'
-            if is_video(abs_f): encode(abs_f,
-                                       to_output_name(abs_f),
-                                       ctx)
+            if is_video(abs_f):
+                if ctx.verbose: print("[INFO] Encoding file:", abs_f)
+                encode(abs_f,
+                       to_output_name(abs_f),
+                       ctx)
 
 
 if __name__ == "__main__":
@@ -264,10 +278,12 @@ if __name__ == "__main__":
     to_encode = args.to_encode
 
     if path.isfile(to_encode) and is_video(to_encode):
+        if args.verbose: print("[INFO] Encoding file:", to_encode)
         encode(to_encode,
                to_output_name(to_encode),
                args)
     elif path.isdir(to_encode):
+        if args.verbose: print("[INFO] Encoding directory:", to_encode)
         encode_directory(to_encode, args)
     else:
         print("[ERROR]", to_encode, "is neither a video file or directory")
