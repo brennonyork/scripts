@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+# Initially taken from - https://github.com/realdanielbyrne/PyAudiobookBinder
+
 import re
 import subprocess
 import json
