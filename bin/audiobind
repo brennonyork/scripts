@@ -4,6 +4,7 @@ Simple command-line tool to merge audio files into one M4B,
 preserving chapters and embedded artwork when present.
 Supported extensions: .mp3, .m4b, .m4a
 """
+import re
 import sys
 import argparse
 import subprocess
@@ -28,18 +29,28 @@ class AudiobookBinder:
             sys.exit(1)
 
     def _collect_files(self):
-        files = sorted(
+        return sorted(
             p for p in self.src.iterdir()
             if p.suffix.lower() in AUDIO_EXTS
         )
-        return files
 
     def _guess_title(self):
-        return self.src.stem.replace('_', ' ')
+        raw = self.src.stem.split('_', 1)[0]
+        # add space between lowercase and uppercase
+        spaced = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', raw)
+        # add space between digits and letters
+        spaced = re.sub(r'(?<=\d)(?=[A-Za-z])', ' ', spaced)
+        spaced = re.sub(r'(?<=[A-Za-z])(?=\d)', ' ', spaced)
+        return spaced.strip()
 
     def _guess_author(self):
         parts = self.src.stem.split('_', 1)
-        return parts[1].replace('_', ' ') if len(parts) > 1 else ''
+        if len(parts) > 1:
+            raw = parts[1]
+            # insert spaces between camel-case
+            author = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', raw)
+            return author.strip()
+        return ''
 
     def _get_duration(self, path):
         out = subprocess.check_output(
@@ -98,24 +109,6 @@ class AudiobookBinder:
         return chapters
 
     def _write_metadata(self):
-        # meta = [";FFMETADATA1"]
-        # meta.append(f"title={self.title}")
-        # meta.append(f"artist={self.author}")
-        # meta.append(f"authors={self.author}")
-        # meta.append("genre=Audiobooks")
-        # chs = self._extract_chapters()
-        # for i, (start, title) in enumerate(chs):
-        #     end = chs[i+1][0]-1 if i+1 < len(chs) else None
-        #     meta.append("[CHAPTER]")
-        #     meta.append("TIMEBASE=1/1000")
-        #     meta.append(f"START={start}")
-        #     if end:
-        #         meta.append(f"END={end}")
-        #     meta.append(f"title={title}")
-        # meta_path = self.src / 'ffmetadata.txt'
-        # with open(meta_path, 'w') as f:
-        #     f.write("\n".join(meta))
-        # return meta_path
         lines = [';FFMETADATA1', 
                  f'title={self.title}', 
                  f'artist={self.author}',
@@ -133,6 +126,9 @@ class AudiobookBinder:
         return meta
 
     def merge(self):
+        print(f"Title: {self.title}")
+        print(f"Author: {self.author}")
+
         flist = self.src / 'file_list.txt'
         with open(flist, 'w') as f:
             for p in self.files:
