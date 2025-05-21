@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+Simple command-line tool to merge audio files into one M4B,
+preserving chapters and embedded artwork when present.
+Supported extensions: .mp3, .m4b, .m4a
+"""
+import sys
+import argparse
+import subprocess
+import json
+from pathlib import Path
+from collections import Counter
+
+AUDIO_EXTS = {'.mp3', '.m4b', '.m4a'}
+
+class AudiobookBinder:
+    def __init__(self, src_dir, title, author, encoder, bitrate, sep, dryrun=False):
+        self.src = Path(src_dir)
+        self.title = title or self._guess_title()
+        self.author = author or self._guess_author()
+        self.encoder = encoder
+        self.bitrate = bitrate or self._get_common_bitrate()
+        self.sep = sep
+        self.dryrun = dryrun
+        self.files = self._collect_files()
+        if not self.files:
+            print("No audio files found.")
+            sys.exit(1)
+
+    def _collect_files(self):
+        files = sorted(
+            p for p in self.src.iterdir()
+            if p.suffix.lower() in AUDIO_EXTS
+        )
+        return files
+
+    def _guess_title(self):
+        return self.src.stem.replace('_', ' ')
+
+    def _guess_author(self):
+        parts = self.src.stem.split('_', 1)
+        return parts[1].replace('_', ' ') if len(parts) > 1 else ''
+
+    def _get_duration(self, path):
+        out = subprocess.check_output(
+            ['ffprobe','-v','error','-show_format','-print_format','json',str(path)]
+        )
+        return float(json.loads(out)['format']['duration'])
+    
+    def _get_bitrate(self, path):
+        out = subprocess.check_output([
+            'ffprobe','-v','error','-show_entries','format=bit_rate',
+            '-print_format','json', str(path)
+        ])
+        data = json.loads(out)['format']
+        return int(data.get('bit_rate', 128000)) // 1000
+
+    def _get_common_bitrate(self):
+        bitrates = [self._get_bitrate(f) for f in self._collect_files()]
+        most, _ = Counter(bitrates).most_common(1)[0]
+        print(f"Using common bitrate: {most}k")
+        return most
+    
+    def _get_cover_input(self):
+        # 1) check for external cover.jpg/png
+        for ext in ('jpg', 'png'):
+            img = self.src / f'cover.{ext}'
+            if img.exists():
+                return str(img)
+        # 2) embedded cover in any input file
+        for f in self.files:
+            data = subprocess.check_output([
+                'ffprobe', '-v', 'error', '-select_streams', 'v',
+                '-show_entries', 'stream=codec_type', '-print_format', 'json', str(f)
+            ])
+            streams = json.loads(data).get('streams', [])
+            if any(s.get('codec_type') == 'video' for s in streams):
+                return str(f)
+        # no cover
+        return None
+
+    def _extract_chapters(self):
+        chapters = []
+        offset = 0
+        for f in self.files:
+            if f.suffix.lower() == '.m4b':
+                data = subprocess.check_output(
+                    ['ffprobe','-v','error','-print_format','json','-show_chapters',str(f)]
+                )
+                for ch in json.loads(data)['chapters']:
+                    start = int(float(ch['start_time']) * 1000) + offset
+                    title = ch.get('tags',{}).get('title','')
+                    chapters.append((start, title))
+            else:
+                # mp3 or m4a: no embedded chapters
+                chapters.append((offset*1000, f.stem))
+            offset += int(self._get_duration(f))
+        return chapters
+
+    def _write_metadata(self):
+        # meta = [";FFMETADATA1"]
+        # meta.append(f"title={self.title}")
+        # meta.append(f"artist={self.author}")
+        # meta.append(f"authors={self.author}")
+        # meta.append("genre=Audiobooks")
+        # chs = self._extract_chapters()
+        # for i, (start, title) in enumerate(chs):
+        #     end = chs[i+1][0]-1 if i+1 < len(chs) else None
+        #     meta.append("[CHAPTER]")
+        #     meta.append("TIMEBASE=1/1000")
+        #     meta.append(f"START={start}")
+        #     if end:
+        #         meta.append(f"END={end}")
+        #     meta.append(f"title={title}")
+        # meta_path = self.src / 'ffmetadata.txt'
+        # with open(meta_path, 'w') as f:
+        #     f.write("\n".join(meta))
+        # return meta_path
+        lines = [';FFMETADATA1', 
+                 f'title={self.title}', 
+                 f'artist={self.author}',
+                 f'authors={self.author}', 
+                 'genre=Audiobooks']
+        chapters = self._extract_chapters()
+        # only write up to second-to-last chapter to satisfy ffmpeg expected END
+        for i in range(len(chapters) - 1):
+            start, title = chapters[i]
+            end = chapters[i+1][0] - 1
+            lines.extend(['[CHAPTER]', 'TIMEBASE=1/1000', f'START={start}', f'END={end}', f'title={title}'])
+        meta = self.src / 'ffmetadata.txt'
+        with open(meta, 'w') as f:
+            f.write("\n".join(lines))
+        return meta
+
+    def merge(self):
+        flist = self.src / 'file_list.txt'
+        with open(flist, 'w') as f:
+            for p in self.files:
+                f.write(f"file '{p.name}'\n")
+
+        meta = self._write_metadata()
+        out_file = self.src / f"{self.title} - {self.author}.m4b"
+
+        cmd = [
+            'ffmpeg', '-y', '-dn', '-fflags', '+genpts',
+            '-avoid_negative_ts', 'make_zero',
+            '-f', 'concat', '-safe', '0', '-i', str(flist),
+            '-i', str(meta)
+        ]
+        cover = self._get_cover_input()
+        if cover:
+            cmd += ['-i', cover]
+
+        # audio mapping and encoding
+        cmd += [
+            '-map', '0:a',
+            '-map_metadata', '1',
+            '-c:a', self.encoder,
+            '-b:a', f"{self.bitrate}k"
+        ]
+        # cover mapping flags to match old behavior
+        if cover:
+            cmd += ['-map', '2:v:0', '-c:v', 'copy', '-disposition:v:0', 'attached_pic']
+
+        # threading and playback options
+        cmd += ['-threads', '0', '-fps_mode:a', 'drop']
+        cmd.append(str(out_file))
+
+        print('Running:', ' '.join(cmd))
+
+        if not self.dryrun:
+            subprocess.run(cmd, check=True)
+
+if __name__ == '__main__':
+    p = argparse.ArgumentParser()
+    p.add_argument('-d','--directory',default='.',help='Source folder')
+    p.add_argument('-t','--title',default='',help='Book title')
+    p.add_argument('-a','--author',default='',help='Author name')
+    p.add_argument('-e','--encoder',choices=['aac','alac','flac','libmp3lame','mpeg4'],default='aac')
+    p.add_argument('-b','--bitrate',type=int,help='Bitrate kbps')
+    p.add_argument('-n','--sep',default='',help='Chapter title separator')
+    p.add_argument('--dryrun', action='store_true', help='Show command without executing')
+    args = p.parse_args()
+    binder = AudiobookBinder(args.directory, args.title, args.author, args.encoder, args.bitrate, args.sep, args.dryrun)
+    binder.merge()
