@@ -132,7 +132,8 @@ class AudiobookBinder:
         flist = self.src / 'file_list.txt'
         with open(flist, 'w') as f:
             for p in self.files:
-                f.write(f"file '{p.name}'\n")
+                name = p.name.replace("'", "'\\''")
+                f.write(f"file '{name}'\n")
 
         meta = self._write_metadata()
         out_file = self.src / f"{self.title} - {self.author}.m4b"
