@@ -15,13 +15,16 @@ from collections import Counter
 AUDIO_EXTS = {'.mp3', '.m4b', '.m4a'}
 
 class AudiobookBinder:
-    def __init__(self, src_dir, title, author, encoder, bitrate, sep, dryrun=False):
+    def __init__(self, src_dir, title, author, ffmetadata, encoder, bitrate, sep, group_chapters, group_chapters_regex, dryrun=False):
         self.src = Path(src_dir)
         self.title = title or self._guess_title()
         self.author = author or self._guess_author()
+        self.ffmetadata_file = Path(ffmetadata) if ffmetadata else None
         self.encoder = encoder
         self.bitrate = bitrate or self._get_common_bitrate()
         self.sep = sep
+        self.group_chapters = group_chapters
+        self.group_chapters_regex = re.compile(group_chapters_regex)
         self.dryrun = dryrun
         self.files = self._collect_files()
         if not self.files:
@@ -93,33 +96,57 @@ class AudiobookBinder:
     def _extract_chapters(self):
         chapters = []
         offset = 0
-        for f in self.files:
-            if f.suffix.lower() == '.m4b':
-                data = subprocess.check_output(
-                    ['ffprobe','-v','error','-print_format','json','-show_chapters',str(f)]
-                )
-                for ch in json.loads(data)['chapters']:
-                    start = int(float(ch['start_time']) * 1000) + offset
-                    title = ch.get('tags',{}).get('title','')
-                    chapters.append((start, title))
-            else:
-                # mp3 or m4a: no embedded chapters
-                chapters.append((offset*1000, f.stem))
-            offset += int(self._get_duration(f))
+        if self.group_chapters:
+            last_group = None
+            for f in self.files:
+                dur = self._get_duration(f)
+                m = self.group_chapters_regex.search(f.stem)
+                group = m.group(1) if m else f.stem
+                if group != last_group:
+                    chapters.append((offset*1000, group))
+                    last_group=group
+                offset += dur
+        else:
+            for f in self.files:
+                if f.suffix.lower() == '.m4b':
+                    data = subprocess.check_output(
+                        ['ffprobe','-v','error','-print_format','json','-show_chapters',str(f)]
+                    )
+                    for ch in json.loads(data)['chapters']:
+                        start = int(float(ch['start_time']) * 1000) + offset
+                        title = ch.get('tags',{}).get('title','')
+                        chapters.append((start, title))
+                else:
+                    # mp3 or m4a: no embedded chapters
+                    chapters.append((offset*1000, f.stem))
+                offset += int(self._get_duration(f))
         return chapters
 
     def _write_metadata(self):
+        if self.ffmetadata_file:
+            return self.ffmetadata_file.resolve()
+
         lines = [';FFMETADATA1', 
                  f'title={self.title}', 
                  f'artist={self.author}',
                  f'authors={self.author}', 
                  'genre=Audiobooks']
         chapters = self._extract_chapters()
-        # only write up to second-to-last chapter to satisfy ffmpeg expected END
-        for i in range(len(chapters) - 1):
-            start, title = chapters[i]
-            end = chapters[i+1][0] - 1
-            lines.extend(['[CHAPTER]', 'TIMEBASE=1/1000', f'START={start}', f'END={end}', f'title={title}'])
+
+        total_ms = int(sum(self._get_duration(f) for f in self.files) * 1000)
+
+        for i, (start, title) in enumerate(chapters):
+            lines.append('[CHAPTER]')
+            lines.append('TIMEBASE=1/1000')
+            lines.append(f'START={start}')
+            if i < len(chapters) - 1:
+                # only write END for non-last chapters
+                end = chapters[i+1][0] - 1
+            else:
+                end = total_ms - 1
+            lines.append(f'END={end}')
+            lines.append(f'title={title}')
+
         meta = self.src / 'ffmetadata.txt'
         with open(meta, 'w') as f:
             f.write("\n".join(lines))
@@ -173,10 +200,23 @@ if __name__ == '__main__':
     p.add_argument('-d','--directory',default='.',help='Source folder')
     p.add_argument('-t','--title',default='',help='Book title')
     p.add_argument('-a','--author',default='',help='Author name')
+    p.add_argument('-m','--metadata',help='Use existing ffmetadata file')
     p.add_argument('-e','--encoder',choices=['aac','alac','flac','libmp3lame','mpeg4'],default='aac')
     p.add_argument('-b','--bitrate',type=int,help='Bitrate kbps')
     p.add_argument('-n','--sep',default='',help='Chapter title separator')
+    p.add_argument('--group-chapters',action='store_true',help='Group files by pattern')
+    p.add_argument('--group-chapters-regex',default=r'(Chapter \d+)',help='Regex to group chapters by pattern')
     p.add_argument('--dryrun', action='store_true', help='Show command without executing')
     args = p.parse_args()
-    binder = AudiobookBinder(args.directory, args.title, args.author, args.encoder, args.bitrate, args.sep, args.dryrun)
+    binder = AudiobookBinder(
+        args.directory, 
+        args.title, 
+        args.author, 
+        args.metadata,
+        args.encoder, 
+        args.bitrate, 
+        args.sep, 
+        args.group_chapters,
+        args.group_chapters_regex,
+        args.dryrun)
     binder.merge()
