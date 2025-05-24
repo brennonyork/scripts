@@ -95,17 +95,19 @@ class AudiobookBinder:
 
     def _extract_chapters(self):
         chapters = []
-        offset = 0
+        offset_ms = 0
         if self.group_chapters:
             last_group = None
             for f in self.files:
-                dur = self._get_duration(f)
+                # get duration *in milliseconds*, rounded to nearest ms
+                dur_ms = int(self._get_duration(f) * 1000 + 0.5)
+                # dur = self._get_duration(f)
                 m = self.group_chapters_regex.search(f.stem)
                 group = m.group(1) if m else f.stem
                 if group != last_group:
-                    chapters.append((offset*1000, group))
+                    chapters.append((offset_ms, group))
                     last_group=group
-                offset += dur
+                offset_ms += dur_ms
         else:
             for f in self.files:
                 if f.suffix.lower() == '.m4b':
@@ -113,13 +115,16 @@ class AudiobookBinder:
                         ['ffprobe','-v','error','-print_format','json','-show_chapters',str(f)]
                     )
                     for ch in json.loads(data)['chapters']:
-                        start = int(float(ch['start_time']) * 1000) + offset
+                        start = int(float(ch['start_time']) * 1000 + 0.5)
                         title = ch.get('tags',{}).get('title','')
-                        chapters.append((start, title))
+                        chapters.append((offset_ms + start, title))
                 else:
                     # mp3 or m4a: no embedded chapters
-                    chapters.append((offset*1000, f.stem))
-                offset += int(self._get_duration(f))
+                    chapters.append((offset_ms, f.stem))
+                # offset += int(self._get_duration(f))
+                # get duration *in milliseconds*, rounded to nearest ms
+                dur_ms = int(self._get_duration(f) * 1000 + 0.5)
+                offset_ms += dur_ms
         return chapters
 
     def _write_metadata(self):
